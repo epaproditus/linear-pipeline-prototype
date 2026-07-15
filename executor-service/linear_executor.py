@@ -1,4 +1,4 @@
-"""Executor-service FastAPI stub."""
+"""Executor-service FastAPI app — calls Hermes API with full tool access."""
 from __future__ import annotations
 
 import logging
@@ -11,15 +11,6 @@ from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
 log = logging.getLogger("executor-service")
-
-EXECUTOR_SOUL = """\
-You are the Executor stage of a Linear agent pipeline.
-You receive issues labeled `planned`.
-Your job: implement the plan, run tests, open a PR, label `in-review`.
-Output contract:
-- Post ONE summary comment with PR URL + test results.
-- Do not change unrelated issues.
-"""
 
 class ExecutorSettings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
@@ -45,13 +36,12 @@ class ExecDecision(BaseModel):
 settings = ExecutorSettings()
 assert settings.linear_api_key, "Executor requires LINEAR_API_KEY in .env"
 
-# Export backend settings before importing backend
 os.environ["BACKEND_URL"] = settings.backend_url
 os.environ["BACKEND_KEY"] = settings.backend_key
 os.environ["MODEL"] = settings.model
 
 from lib.linear_client import LinearClient
-from lib.backend import chat
+from lib.backend import agent_chat
 
 app = FastAPI(title="executor-service")
 linear = LinearClient(settings.linear_api_key)
@@ -67,9 +57,20 @@ def _load_state_ids() -> dict[str, str]:
         _EXECUTOR_STATES = {s["name"].lower(): s["id"] for s in states}
     return _EXECUTOR_STATES
 
+def _fetch_plan_comment(issue: dict[str, Any]) -> str:
+    """Extract the plan from issue comments (posted by Planner)."""
+    comments = issue.get("comments", {}).get("nodes", [])
+    for c in reversed(comments):
+        body = c.get("body", "") or ""
+        if body.strip().startswith("Plan:"):
+            return body
+    return ""
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "executor"}
+
 
 @app.post("/execute")
 def execute(req: ExecRequest) -> ExecDecision:
@@ -77,13 +78,32 @@ def execute(req: ExecRequest) -> ExecDecision:
     if issue["team"]["id"] not in settings.team_id_set:
         raise ValueError("team not allowed")
 
-    prompt = f"{EXECUTOR_SOUL}\n\nIssue: {issue['identifier']}\nTitle: {issue['title']}\nDescription:\n{issue['description'] or ''}\n"
-    answer = chat([{"role": "user", "content": prompt}])
-    comment = answer or "Executed: no output."
+    identifier = issue["identifier"]
+    title = issue["title"]
+    description = issue.get("description") or ""
+    plan = _fetch_plan_comment(issue)
+
+    prompt = (
+        f"You are Hermes, an autonomous implementation agent.\n"
+        f"Tools (filesystem, shell, git, web) are available.\n"
+        f"\n"
+        f"Issue: {identifier} — {title}\n"
+        f"Description: {description}\n"
+        f"\n"
+        f"Plan from previous stage:\n{plan or '(no plan found)'}\n"
+        f"\n"
+        f"Implement the plan. Clone the repo, make changes, run tests,\n"
+        f"commit, push, and open a GitHub PR. Reference {identifier}.\n"
+        f"\n"
+        f"Use your tools — don't just describe what to do.\n"
+        f"Post a summary comment on the Linear issue when done.\n"
+    )
+
+    answer = agent_chat([{"role": "user", "content": prompt}])
+    comment = answer or "Execution complete."
 
     try:
         linear.create_comment(req.issue_id, comment)
-        # Transition to In Review
         states = _load_state_ids()
         in_review_id = states.get("in review")
         if in_review_id:
