@@ -1,12 +1,12 @@
 """Router-service FastAPI app."""
+
 from __future__ import annotations
 
+import json
 import logging
 import os
-from pathlib import Path
 from typing import Any
-
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
@@ -18,20 +18,27 @@ You receive issues entering `needs-triage` or `blocked`.
 Your job is bounded triage only. Do not implement, plan, or debug.
 
 Checks for ready:
-1. Repo exists and is accessible. The repo URL may be in the issue
-   description, labels, or project context.
-2. Acceptance criteria are present. If the issue has no explicit AC, treat that
-   as a blocker unless the description itself contains measurable done-criteria.
-3. Scope is bounded. Reject open-ended requests like "rewrite the auth system"
-   without an explicit files/components list.
+1. Repo exists and is accessible.
+2. Acceptance criteria are present.
+3. Scope is bounded.
 
-Output contract (strict):
-- Pass: respond with ONLY this text:
-    Ready: <one-line rationale>
-- Fail: respond with ONLY this text:
-    Blocked: <one-line reason>. Question: <exactly one clarifying question>
-Do not post multiple questions or paragraphs of suggestions.
+OUTPUT JSON — your entire response must be valid JSON with NO extra text:
+{
+  "status": "ready" or "blocked",
+  "reason": "one-line rationale",
+  "checks": {
+    "repo_exists": true/false,
+    "ac_present": true/false,
+    "scope_bounded": true/false
+  }
+}
+
+If blocked, also include:
+  "question": "one clarifying question"
+
+Do NOT output anything outside the JSON. No preamble, no markdown, no code fences.
 """
+
 
 class RouterSettings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
@@ -59,7 +66,6 @@ class TriageDecision(BaseModel):
 settings = RouterSettings()
 assert settings.linear_api_key, "Router requires LINEAR_API_KEY in .env"
 
-# Export backend settings before importing backend
 os.environ["BACKEND_URL"] = settings.backend_url
 os.environ["BACKEND_KEY"] = settings.backend_key
 os.environ["MODEL"] = settings.model
@@ -69,18 +75,32 @@ from lib.backend import chat
 
 app = FastAPI(title="router-service")
 linear = LinearClient(settings.linear_api_key)
+os.environ.pop("LINEAR_API_KEY", None)
 
-# Pipeline state IDs for this team — lazy-loaded on first triage
 _ROUTER_STATES: dict[str, str] | None = None
 
 def _load_state_ids() -> dict[str, str]:
-    """Fetch workflow states and map lowercase names to IDs."""
     global _ROUTER_STATES
     if _ROUTER_STATES is None:
         team_id = list(settings.team_id_set)[0]
         states = linear.get_team_states(team_id)
         _ROUTER_STATES = {s["name"].lower(): s["id"] for s in states}
     return _ROUTER_STATES
+
+def _format_previous_stages(issue: dict[str, Any]) -> str:
+    """Build context string from previous stage comments."""
+    comments = issue.get("comments", {}).get("nodes", [])
+    if not comments:
+        return "(no prior stage output)"
+    lines = []
+    for c in comments:
+        body = (c.get("body") or "").strip()
+        if body:
+            # Truncate very long comments for the prompt
+            excerpt = body if len(body) < 800 else body[:800] + "\n...(truncated)"
+            lines.append(excerpt)
+    return "\n\n---\n\n".join(lines)
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -90,22 +110,56 @@ def health() -> dict[str, str]:
 def triage(req: TriageRequest) -> TriageDecision:
     issue = linear.get_issue(req.issue_id)
     if issue["team"]["id"] not in settings.team_id_set:
-        return TriageDecision(status="blocked", comment="Blocked: not in allowed team.", labels=["blocked"])
+        return TriageDecision(status="blocked", comment=json.dumps({"status":"blocked","reason":"not in allowed team"}), labels=["blocked"])
 
-    messages = [
-        {"role": "system", "content": ROUTER_SOUL},
-        {"role": "user", "content": f"Issue: {issue['identifier']}\nTitle: {issue['title']}\nDescription:\n{issue['description'] or ''}\nState: {issue['state']['name']}"},
-    ]
-    raw = chat(messages)
-    status = "ready" if raw.startswith("Ready:") else "blocked"
-    decision = TriageDecision(status=status, comment=raw, labels=[status])
+    prior_context = _format_previous_stages(issue)
+    identifier = issue["identifier"]
+    title = issue["title"]
+    description = issue.get("description") or ""
+
+    prompt = (
+        f"{ROUTER_SOUL}\n\n"
+        f"Issue: {identifier} — {title}\n"
+        f"Description: {description}\n"
+        f"State: {issue['state']['name']}\n"
+        f"\n"
+        f"Prior stage output:\n{prior_context}\n"
+    )
+
+    raw = chat([{"role": "user", "content": prompt}])
+
+    # Parse JSON from response
     try:
-        linear.create_comment(req.issue_id, raw)
-        # Transition issue to Ready or Blocked state
+        parsed = json.loads(raw)
+        status = parsed.get("status", "blocked")
+        if status not in ("ready", "blocked"):
+            status = "blocked"
+    except (json.JSONDecodeError, TypeError):
+        # Fallback: accept raw JSON anywhere in the text
+        log.warning("Router JSON parse failed, raw=%s", raw[:200])
+        # Try to find JSON block
+        import re as _re
+        m = _re.search(r'\{.*"status".*\}', raw, _re.DOTALL)
+        if m:
+            try:
+                parsed = json.loads(m.group())
+                status = parsed.get("status", "blocked")
+            except json.JSONDecodeError:
+                status = "blocked"
+        else:
+            status = "blocked"
+        parsed = {"status": status, "reason": "parse fallback", "checks": {}}
+
+    comment = json.dumps(parsed, indent=2)
+    decision = TriageDecision(status=status, comment=comment, labels=[status])
+
+    try:
+        linear.create_comment(req.issue_id, comment)
         states = _load_state_ids()
-        target_state = states.get(status)  # "ready" or "blocked"
+        target_state = states.get(status)
         if target_state:
             linear.update_issue_state(req.issue_id, target_state)
     except Exception:
         log.exception("Linear write failed %s", req.issue_id)
+
     return decision

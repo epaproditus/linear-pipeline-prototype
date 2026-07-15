@@ -1,9 +1,11 @@
 """Executor-service FastAPI app — calls Hermes API with full tool access."""
+
 from __future__ import annotations
 
+import json
 import logging
 import os
-from pathlib import Path
+import re
 from typing import Any
 
 from fastapi import FastAPI
@@ -45,11 +47,8 @@ from lib.backend import agent_chat
 
 app = FastAPI(title="executor-service")
 linear = LinearClient(settings.linear_api_key)
-
-# Unset the API key from environment so Hermes tools can't use it to update Linear directly
 os.environ.pop("LINEAR_API_KEY", None)
 
-# Pipeline state IDs — lazy-loaded
 _EXECUTOR_STATES: dict[str, str] | None = None
 
 def _load_state_ids() -> dict[str, str]:
@@ -60,20 +59,22 @@ def _load_state_ids() -> dict[str, str]:
         _EXECUTOR_STATES = {s["name"].lower(): s["id"] for s in states}
     return _EXECUTOR_STATES
 
-def _fetch_plan_comment(issue: dict[str, Any]) -> str:
-    """Extract the plan from issue comments (posted by Planner)."""
+def _format_previous_stages(issue: dict[str, Any]) -> str:
     comments = issue.get("comments", {}).get("nodes", [])
-    for c in reversed(comments):
-        body = c.get("body", "") or ""
-        if body.strip().startswith("Plan:"):
-            return body
-    return ""
+    if not comments:
+        return "(no prior stage output)"
+    lines = []
+    for c in comments:
+        body = (c.get("body") or "").strip()
+        if body:
+            excerpt = body if len(body) < 1200 else body[:1200] + "\n...(truncated)"
+            lines.append(excerpt)
+    return "\n\n---\n\n".join(lines)
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "executor"}
-
 
 @app.post("/execute")
 def execute(req: ExecRequest) -> ExecDecision:
@@ -84,7 +85,7 @@ def execute(req: ExecRequest) -> ExecDecision:
     identifier = issue["identifier"]
     title = issue["title"]
     description = issue.get("description") or ""
-    plan = _fetch_plan_comment(issue)
+    prior_context = _format_previous_stages(issue)
 
     prompt = (
         f"You are Hermes, an autonomous implementation agent.\n"
@@ -96,10 +97,13 @@ def execute(req: ExecRequest) -> ExecDecision:
         f"Issue: {identifier} — {title}\n"
         f"Description: {description}\n"
         f"\n"
-        f"Plan from previous stage:\n{plan or '(no plan found)'}\n"
+        f"Prior stage output (Router + Planner):\n{prior_context}\n"
         f"\n"
         f"Implement the plan. Clone the repo, make changes, run tests,\n"
         f"commit, push, and open a GitHub PR. Reference {identifier}.\n"
+        f"\n"
+        f"When you are done, output a JSON summary as your FINAL message:\n"
+        f'{{"summary":"what you did","pr_url":"https://...","changes":["file1","file2"]}}\n'
         f"\n"
         f"Use your tools — don't just describe what to do.\n"
     )
@@ -107,8 +111,24 @@ def execute(req: ExecRequest) -> ExecDecision:
     answer = agent_chat([{"role": "user", "content": prompt}])
     comment = answer or "Execution complete."
 
+    # Try to extract JSON from the last part of the answer
+    json_block = None
+    m = re.search(r'\{.*"summary".*\}', comment, re.DOTALL)
+    if m:
+        try:
+            json_block = json.loads(m.group())
+        except json.JSONDecodeError:
+            pass
+
+    if json_block:
+        # Post the JSON as the structured comment
+        payload = json.dumps(json_block, indent=2)
+    else:
+        # Post the raw answer
+        payload = comment
+
     try:
-        linear.create_comment(req.issue_id, comment)
+        linear.create_comment(req.issue_id, payload)
         states = _load_state_ids()
         in_review_id = states.get("in review")
         if in_review_id:
@@ -116,4 +136,4 @@ def execute(req: ExecRequest) -> ExecDecision:
     except Exception:
         log.exception("Executor write failed %s", req.issue_id)
 
-    return ExecDecision(summary=comment)
+    return ExecDecision(summary=payload)
