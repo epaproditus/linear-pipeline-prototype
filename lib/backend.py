@@ -29,7 +29,7 @@ def chat(messages: list[dict[str, str]], *, max_tokens: int = 400, temperature: 
         "max_tokens": max_tokens,
         "stream": False,
     }
-    with httpx.Client(timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0)) as client:
+    with httpx.Client(timeout=httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)) as client:
         resp = client.post(f"{_settings.url}/chat/completions", headers=headers, json=payload)
         resp.raise_for_status()
         data = resp.json()
