@@ -38,7 +38,7 @@ STATE_ROUTES: dict[str, str] = {
     "needs-triage": settings.router_url,
     "ready": settings.planner_url,
     "planned": settings.executor_url,
-    "in-review": settings.critic_url,
+    "in review": settings.critic_url,
 }
 
 
