@@ -2,15 +2,13 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
-
-from lib.linear_client import LinearClient
-from lib.backend import chat
 
 log = logging.getLogger("critic-service")
 
@@ -31,6 +29,9 @@ class CriticSettings(BaseSettings):
 
     linear_api_key: str = ""
     allowed_team_ids: str = ""
+    backend_url: str = "http://127.0.0.1:8642/v1"
+    backend_key: str = ""
+    model: str = "hermes-agent"
     workdir: str = str(Path.home() / "linear-pipeline-prototype" / "critic-service" / "workspace")
 
     @property
@@ -47,6 +48,15 @@ class ReviewDecision(BaseModel):
 
 settings = CriticSettings()
 assert settings.linear_api_key, "Critic requires LINEAR_API_KEY in .env"
+
+# Export backend settings before importing backend
+os.environ["BACKEND_URL"] = settings.backend_url
+os.environ["BACKEND_KEY"] = settings.backend_key
+os.environ["MODEL"] = settings.model
+
+from lib.linear_client import LinearClient
+from lib.backend import chat
+
 app = FastAPI(title="critic-service")
 linear = LinearClient(settings.linear_api_key)
 
