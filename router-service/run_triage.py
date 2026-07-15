@@ -16,6 +16,8 @@ def main() -> None:
     client = LinearClient(settings.linear_api_key)
     team_id = settings.allowed_team_ids.split(",")[0].strip()
     states = client.get_team_states(team_id)
+    print("DEBUG team_id=", team_id)
+    print("DEBUG states=", states)
     needs_triage = next((s["id"] for s in states if s["name"].lower() == "Todo"), None)
     if not needs_triage:
         raise SystemExit("No Todo state found in team")
