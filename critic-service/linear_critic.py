@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
@@ -104,6 +105,13 @@ def review(req: ReviewRequest) -> ReviewDecision:
     issue = linear.get_issue(req.issue_id)
     if issue["team"]["id"] not in settings.team_id_set:
         raise ValueError("team not allowed")
+
+    # Guard: only process if still In Review (prevents duplicate trigger
+    # when Critic's own state transition fires a webhook back here)
+    current_state = issue["state"]["name"].lower()
+    if current_state not in ("in review",):
+        log.info("Skipped: issue %s is '%s', not 'in review'", req.issue_id[:8], current_state)
+        return ReviewDecision(decision="skip", comment='{"decision":"skip","reason":"already processed"}')
 
     prior_context = _format_previous_stages(issue)
     identifier = issue["identifier"]
