@@ -15,34 +15,37 @@ from lib.linear_client import LinearClient
 
 log = logging.getLogger("dispatcher")
 
-ROUTER_URL = os.getenv("ROUTER_URL", "http://127.0.0.1:8661/triage")
-PLANNER_URL = os.getenv("PLANNER_URL", "http://127.0.0.1:8663/plan")
-EXECUTOR_URL = os.getenv("EXECUTOR_URL", "http://127.0.0.1:8664/execute")
-CRITIC_URL = os.getenv("CRITIC_URL", "http://127.0.0.1:8665/review")
-
-STATE_ROUTES: dict[str, str] = {
-    "needs-triage": ROUTER_URL,
-    "ready": PLANNER_URL,
-    "planned": EXECUTOR_URL,
-    "in-review": CRITIC_URL,
-}
 
 class DispatcherSettings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
     allowed_team_ids: str = ""
     linear_api_key: str = ""
     webhook_secret: str = ""
+    router_url: str = "http://127.0.0.1:8661/triage"
+    planner_url: str = "http://127.0.0.1:8663/plan"
+    executor_url: str = "http://127.0.0.1:8664/execute"
+    critic_url: str = "http://127.0.0.1:8665/review"
 
     @property
     def team_id_set(self) -> set[str]:
         return {tid.strip() for tid in self.allowed_team_ids.split(",") if tid.strip()}
 
+
 settings = DispatcherSettings()
 app = FastAPI(title="pipeline-dispatcher")
+
+STATE_ROUTES: dict[str, str] = {
+    "needs-triage": settings.router_url,
+    "ready": settings.planner_url,
+    "planned": settings.executor_url,
+    "in-review": settings.critic_url,
+}
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "dispatcher"}
+
 
 @app.post("/webhook")
 async def webhook(request: Request) -> Response:
