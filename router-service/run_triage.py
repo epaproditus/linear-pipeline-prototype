@@ -33,7 +33,7 @@ def main() -> None:
     issue_id = issues[0]["id"]
     identifier = issues[0]["identifier"]
     print(f"Smoke triaging {identifier} ({issue_id})")
-    resp = httpx.post(webhook_url, json={"issue_id": issue_id}, timeout=10)
+    resp = httpx.post(webhook_url, json={"issue_id": issue_id}, timeout=120)
     print(resp.status_code, resp.text)
 
 
