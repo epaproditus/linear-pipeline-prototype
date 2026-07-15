@@ -59,7 +59,7 @@ class TriageDecision(BaseModel):
 settings = RouterSettings()
 assert settings.linear_api_key, "Router requires LINEAR_API_KEY in .env"
 
-# Export backend settings BEFORE importing backend (so BackendSettings() sees them)
+# Export backend settings before importing backend
 os.environ["BACKEND_URL"] = settings.backend_url
 os.environ["BACKEND_KEY"] = settings.backend_key
 os.environ["MODEL"] = settings.model
@@ -69,6 +69,18 @@ from lib.backend import chat
 
 app = FastAPI(title="router-service")
 linear = LinearClient(settings.linear_api_key)
+
+# Pipeline state IDs for this team — lazy-loaded on first triage
+_ROUTER_STATES: dict[str, str] | None = None
+
+def _load_state_ids() -> dict[str, str]:
+    """Fetch workflow states and map lowercase names to IDs."""
+    global _ROUTER_STATES
+    if _ROUTER_STATES is None:
+        team_id = list(settings.team_id_set)[0]
+        states = linear.get_team_states(team_id)
+        _ROUTER_STATES = {s["name"].lower(): s["id"] for s in states}
+    return _ROUTER_STATES
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -89,6 +101,11 @@ def triage(req: TriageRequest) -> TriageDecision:
     decision = TriageDecision(status=status, comment=raw, labels=[status])
     try:
         linear.create_comment(req.issue_id, raw)
+        # Transition issue to Ready or Blocked state
+        states = _load_state_ids()
+        target_state = states.get(status)  # "ready" or "blocked"
+        if target_state:
+            linear.update_issue_state(req.issue_id, target_state)
     except Exception:
         log.exception("Linear write failed %s", req.issue_id)
     return decision

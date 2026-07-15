@@ -57,3 +57,9 @@ class LinearClient:
           }
         }"""
         return list(self._gql(query, {"teamId": team_id})["workflowStates"]["nodes"])
+
+    def update_issue_state(self, issue_id: str, state_id: str) -> dict[str, Any]:
+        mutation = """mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
+          issueUpdate(id: $id, input: $input) { success issue { id identifier state { id name } } }
+        }"""
+        return self._gql(mutation, {"id": issue_id, "input": {"stateId": state_id}})
