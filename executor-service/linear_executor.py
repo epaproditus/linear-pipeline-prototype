@@ -56,6 +56,17 @@ from lib.backend import chat
 app = FastAPI(title="executor-service")
 linear = LinearClient(settings.linear_api_key)
 
+# Pipeline state IDs — lazy-loaded
+_EXECUTOR_STATES: dict[str, str] | None = None
+
+def _load_state_ids() -> dict[str, str]:
+    global _EXECUTOR_STATES
+    if _EXECUTOR_STATES is None:
+        team_id = list(settings.team_id_set)[0]
+        states = linear.get_team_states(team_id)
+        _EXECUTOR_STATES = {s["name"].lower(): s["id"] for s in states}
+    return _EXECUTOR_STATES
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "executor"}
@@ -72,7 +83,12 @@ def execute(req: ExecRequest) -> ExecDecision:
 
     try:
         linear.create_comment(req.issue_id, comment)
+        # Transition to In Review
+        states = _load_state_ids()
+        in_review_id = states.get("in review")
+        if in_review_id:
+            linear.update_issue_state(req.issue_id, in_review_id)
     except Exception:
-        log.exception("Executor comment failed %s", req.issue_id)
+        log.exception("Executor write failed %s", req.issue_id)
 
     return ExecDecision(summary=comment)

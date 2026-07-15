@@ -60,6 +60,17 @@ from lib.backend import chat
 app = FastAPI(title="critic-service")
 linear = LinearClient(settings.linear_api_key)
 
+# Pipeline state IDs — lazy-loaded
+_CRITIC_STATES: dict[str, str] | None = None
+
+def _load_state_ids() -> dict[str, str]:
+    global _CRITIC_STATES
+    if _CRITIC_STATES is None:
+        team_id = list(settings.team_id_set)[0]
+        states = linear.get_team_states(team_id)
+        _CRITIC_STATES = {s["name"].lower(): s["id"] for s in states}
+    return _CRITIC_STATES
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "critic"}
@@ -75,6 +86,12 @@ def review(req: ReviewRequest) -> ReviewDecision:
     decision = "approve" if answer.startswith("LGTM:") else "changes"
     try:
         linear.create_comment(req.issue_id, answer)
+        # Transition: approve → Done, changes → Planned
+        states = _load_state_ids()
+        target = "done" if decision == "approve" else "planned"
+        target_id = states.get(target)
+        if target_id:
+            linear.update_issue_state(req.issue_id, target_id)
     except Exception:
-        log.exception("Critic comment failed %s", req.issue_id)
+        log.exception("Critic write failed %s", req.issue_id)
     return ReviewDecision(decision=decision, comment=answer)

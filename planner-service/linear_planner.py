@@ -59,6 +59,17 @@ from lib.backend import chat
 app = FastAPI(title="planner-service")
 linear = LinearClient(settings.linear_api_key)
 
+# Pipeline state IDs — lazy-loaded
+_PLANNER_STATES: dict[str, str] | None = None
+
+def _load_state_ids() -> dict[str, str]:
+    global _PLANNER_STATES
+    if _PLANNER_STATES is None:
+        team_id = list(settings.team_id_set)[0]
+        states = linear.get_team_states(team_id)
+        _PLANNER_STATES = {s["name"].lower(): s["id"] for s in states}
+    return _PLANNER_STATES
+
 
 @app.get("/health")
 def health():
@@ -77,7 +88,12 @@ def plan(req: PlanRequest) -> PlanDecision:
 
     try:
         linear.create_comment(req.issue_id, comment)
+        # Transition to Planned state
+        states = _load_state_ids()
+        planned_id = states.get("planned")
+        if planned_id:
+            linear.update_issue_state(req.issue_id, planned_id)
     except Exception:
-        log.exception("Planner comment failed %s", req.issue_id)
+        log.exception("Planner write failed %s", req.issue_id)
 
     return PlanDecision(summary=comment)
