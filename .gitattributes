@@ -1,0 +1,17 @@
+# Auto-detect text files and normalize line endings (LF)
+* text=auto
+
+# Python sources — enable language-aware diff
+*.py    diff=python
+
+# Generated / binary artifacts — never diff, never normalize
+*.pyc   binary
+*.pyo   binary
+*.whl   binary
+*.egg   binary
+*.egg-info/* binary
+
+# Windows-specific generated files
+*.exe   binary
+*.dll   binary
+*.pyd   binary
