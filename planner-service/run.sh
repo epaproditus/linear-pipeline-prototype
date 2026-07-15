@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-
-if [ ! -f .env ]; then
-  cp .env.example .env
-  echo "Created .env from template. Edit it with real values, then rerun."
-  exit 1
-fi
-
+cd "$(dirname "$0")"
+export PYTHONPATH="../lib"
 uvicorn linear_planner:app --host 0.0.0.0 --port 8663 --log-level info
