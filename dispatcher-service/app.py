@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
 from pathlib import Path
@@ -42,6 +44,18 @@ STATE_ROUTES: dict[str, str] = {
 }
 
 
+def _verify_signature(body: bytes, signature_header: str) -> bool:
+    """HMAC-SHA256 verification of Linear webhook payload."""
+    if not settings.webhook_secret:
+        return True  # No secret configured — skip verification
+    expected = hmac.new(
+        settings.webhook_secret.encode(),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "dispatcher"}
@@ -50,6 +64,13 @@ def health() -> dict[str, str]:
 @app.post("/webhook")
 async def webhook(request: Request) -> Response:
     body = await request.body()
+
+    # Verify HMAC signature
+    sig = request.headers.get("Linear-Signature", "")
+    if sig and not _verify_signature(body, sig):
+        log.warning("Invalid webhook signature")
+        return Response(status_code=401)
+
     try:
         event = await request.json()
     except Exception:
@@ -63,10 +84,16 @@ async def webhook(request: Request) -> Response:
     if not issue_id or not issue_state_name:
         return Response(status_code=202)
 
+    # Only process the Playground team
+    team_ids = settings.team_id_set
+    if team_ids and team_id not in team_ids:
+        return Response(status_code=202)
+
     url = STATE_ROUTES.get(issue_state_name)
     if not url:
         return Response(status_code=202)
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10, 60)) as client:
+    log.info("Routing %s (state=%s) → %s", issue_id, issue_state_name, url)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(read=180.0)) as client:
         resp = await client.post(url, json={"issue_id": issue_id})
     return Response(status_code=resp.status_code, content=resp.content, media_type="application/json")
