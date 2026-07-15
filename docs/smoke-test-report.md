@@ -7,39 +7,36 @@ Completed: 2026-07-15
 | Service | Port | Endpoint | Status |
 |---------|------|----------|--------|
 | Router | 8670 | /triage | 200 OK — triage decision posted as comment |
-| Planner | 8663 | /plan | 200 OK — plan comment posted, state → Planned |
-| Executor | 8664 | /execute | Running |
+| Planner | 8663 | /plan | 200 OK — plan comment posted, state changed to Planned |
+| Executor | 8664 | /execute | Scaffolded |
+| Critic | 8665 | /review | Scaffolded |
 
-## Router Smoke Test
+## Step 3: Router E2E Smoke Test
 
-```bash
-curl -s -X POST http://127.0.0.1:8670/triage \
-  -H "Content-Type: application/json" \
-  -d '{"issue_id": "ISSUE_UUID"}' \
-  --max-time 120
-```
+POST /triage with PLY-279:
+- Response: `{"status":"blocked","comment":"Blocked: No repo URL, no acceptance criteria...","labels":["blocked"]}`
+- Result: 200 OK, comment posted to PLY-279
+- Services restarted with proper `run.sh` environment loading
 
-Expected: `{"status":"blocked","comment":"Blocked: ...","labels":["blocked"]}`
-Result: ✅ Comment posted to PLY-279, issue state unchanged (Blocked)
+## Step 4: Planner E2E Smoke Test
 
-## Planner Smoke Test
+POST /plan with PLY-279:
+- Response: `{"summary":"Done. Here's the summary:\n\n**PLY-279 — Smoke test todo**\n\nPlan posted to the issue..."}`
+- Result: 200 OK, plan comment posted, issue state transitioned to Planned
 
-```bash
-curl -s -X POST http://127.0.0.1:8663/plan \
-  -H "Content-Type: application/json" \
-  -d '{"issue_id": "ISSUE_UUID"}' \
-  --max-time 120
-```
+## Step 5: Cleanup
 
-Expected: `{"summary":"**Planner complete for PLY-279.**\\n\\nPlan posted as comment..."}`
-Result: ✅ Plan comment posted, issue moved to Planned state
+- Closing comment posted to PLY-279
+- Issue moved to **Done** state
+- Synthetic smoke-test artifact closed
 
 ## Verification
 
 Both services:
-- `GET /health` returns `{"status":"ok"}`
+- GET /health returns `{"status":"ok"}`
 - LLM backend (Hermes API on :8642) reachable
 - Linear GraphQL mutations succeed (comments + state transitions)
+- Services properly started via `run.sh` (venv activation, env loading, PYTHONPATH)
 
 ## Issue
 
