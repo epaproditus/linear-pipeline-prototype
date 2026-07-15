@@ -59,6 +59,7 @@ from lib.backend import chat
 
 app = FastAPI(title="critic-service")
 linear = LinearClient(settings.linear_api_key)
+os.environ.pop("LINEAR_API_KEY", None)
 
 # Pipeline state IDs — lazy-loaded
 _CRITIC_STATES: dict[str, str] | None = None

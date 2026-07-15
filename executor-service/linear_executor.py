@@ -46,6 +46,9 @@ from lib.backend import agent_chat
 app = FastAPI(title="executor-service")
 linear = LinearClient(settings.linear_api_key)
 
+# Unset the API key from environment so Hermes tools can't use it to update Linear directly
+os.environ.pop("LINEAR_API_KEY", None)
+
 # Pipeline state IDs — lazy-loaded
 _EXECUTOR_STATES: dict[str, str] | None = None
 
@@ -87,6 +90,9 @@ def execute(req: ExecRequest) -> ExecDecision:
         f"You are Hermes, an autonomous implementation agent.\n"
         f"Tools (filesystem, shell, git, web) are available.\n"
         f"\n"
+        f"IMPORTANT: Do NOT touch Linear's API. Do NOT update issue states, post comments,\n"
+        f"or interact with Linear in any way. The pipeline services handle all Linear updates.\n"
+        f"\n"
         f"Issue: {identifier} — {title}\n"
         f"Description: {description}\n"
         f"\n"
@@ -96,7 +102,6 @@ def execute(req: ExecRequest) -> ExecDecision:
         f"commit, push, and open a GitHub PR. Reference {identifier}.\n"
         f"\n"
         f"Use your tools — don't just describe what to do.\n"
-        f"Post a summary comment on the Linear issue when done.\n"
     )
 
     answer = agent_chat([{"role": "user", "content": prompt}])
