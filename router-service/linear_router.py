@@ -10,9 +10,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
-from lib.linear_client import LinearClient
-from lib.backend import chat
-
 log = logging.getLogger("router-service")
 
 ROUTER_SOUL = """\
@@ -62,10 +59,13 @@ class TriageDecision(BaseModel):
 settings = RouterSettings()
 assert settings.linear_api_key, "Router requires LINEAR_API_KEY in .env"
 
-# Export backend settings so lib.backend.chat() picks them up via os.getenv
-os.environ.setdefault("BACKEND_URL", settings.backend_url)
-os.environ.setdefault("BACKEND_KEY", settings.backend_key)
-os.environ.setdefault("MODEL", settings.model)
+# Export backend settings BEFORE importing backend (so BackendSettings() sees them)
+os.environ["BACKEND_URL"] = settings.backend_url
+os.environ["BACKEND_KEY"] = settings.backend_key
+os.environ["MODEL"] = settings.model
+
+from lib.linear_client import LinearClient
+from lib.backend import chat
 
 app = FastAPI(title="router-service")
 linear = LinearClient(settings.linear_api_key)
