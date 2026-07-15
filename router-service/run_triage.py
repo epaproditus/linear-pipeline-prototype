@@ -18,7 +18,7 @@ def main() -> None:
     states = client.get_team_states(team_id)
     print("DEBUG team_id=", team_id)
     print("DEBUG states=", states)
-    needs_triage = next((s["id"] for s in states if s["name"].lower() == "Todo"), None)
+    needs_triage = next((s["id"] for s in states if s["name"].lower() == "todo"), None)
     if not needs_triage:
         raise SystemExit("No Todo state found in team")
     query = """query NeedsTriage($teamId: ID!, $stateId: ID!) {
