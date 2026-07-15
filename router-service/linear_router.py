@@ -62,6 +62,11 @@ class TriageDecision(BaseModel):
 settings = RouterSettings()
 assert settings.linear_api_key, "Router requires LINEAR_API_KEY in .env"
 
+# Export backend settings so lib.backend.chat() picks them up via os.getenv
+os.environ.setdefault("BACKEND_URL", settings.backend_url)
+os.environ.setdefault("BACKEND_KEY", settings.backend_key)
+os.environ.setdefault("MODEL", settings.model)
+
 app = FastAPI(title="router-service")
 linear = LinearClient(settings.linear_api_key)
 
