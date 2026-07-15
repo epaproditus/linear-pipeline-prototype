@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
 cd "$(dirname "$0")"
-export PYTHONPATH=".."
-uvicorn linear_router:app --host 0.0.0.0 --port 8670 --log-level info
+unset LINEAR_API_KEY
+export $(grep -v '^#' .env | xargs)
+export PYTHONPATH=..
+. .venv/bin/activate
+exec uvicorn linear_router:app --host 0.0.0.0 --port 8670 --log-level info
