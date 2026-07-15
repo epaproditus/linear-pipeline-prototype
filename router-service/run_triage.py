@@ -1,3 +1,4 @@
+"""Smoke-test script: triage a real issue through the Router pipeline."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,11 +17,9 @@ def main() -> None:
     client = LinearClient(settings.linear_api_key)
     team_id = settings.allowed_team_ids.split(",")[0].strip()
     states = client.get_team_states(team_id)
-    print("DEBUG team_id=", team_id)
-    print("DEBUG states=", states)
-    needs_triage = next((s["id"] for s in states if s["name"].lower() == "todo"), None)
+    needs_triage = next((s["id"] for s in states if s["name"].lower() == "needs-triage"), None)
     if not needs_triage:
-        raise SystemExit("No Todo state found in team")
+        raise SystemExit("No needs-triage state found in team")
     query = """query NeedsTriage($teamId: ID!, $stateId: ID!) {
       issues(filter: { team: { id: { eq: $teamId } }, state: { id: { eq: $stateId } } }, first: 1) {
         nodes { id identifier title state { name } }
@@ -29,7 +28,7 @@ def main() -> None:
     data = client._gql(query, {"teamId": team_id, "stateId": needs_triage})
     issues = data["issues"]["nodes"]
     if not issues:
-        raise SystemExit("No issues in Todo")
+        raise SystemExit("No issues in needs-triage")
     issue_id = issues[0]["id"]
     identifier = issues[0]["identifier"]
     print(f"Smoke triaging {identifier} ({issue_id})")
