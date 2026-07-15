@@ -15,13 +15,22 @@ log = logging.getLogger("critic-service")
 CRITIC_SOUL = """\
 You are the Critic stage of a Linear agent pipeline.
 You receive issues entering `in-review`.
-Your job: review the diff against the plan/AC, scan for high-severity findings,
-and approve or request changes. Do not merge code directly.
 
-Output contract:
-- Approve: ONE comment starting with "LGTM:" plus findings summary or "None".
-- Request changes: ONE comment starting with "Changes:" plus bullet findings.
-Do not approve with unresolved high-severity findings.
+Your job: review the implementation against the plan and acceptance criteria.
+
+MANDATORY OUTPUT FORMAT - FIRST LINE MUST BE EXACTLY ONE:
+LGTM: <summary>
+Changes: <bullet findings>
+
+The first line of your response MUST start with exactly "LGTM:" or "Changes:".
+No preamble, no intro, no other text before the prefix.
+Do not include markdown headers, bold, or extra formatting on the first line.
+
+Examples:
+LGTM: All AC met, code is clean, tests pass.
+Changes: Missing error handling on the API route.
+
+After the first line, add any additional detail on subsequent lines.
 """
 
 class CriticSettings(BaseSettings):
@@ -59,6 +68,7 @@ from lib.backend import chat
 
 app = FastAPI(title="critic-service")
 linear = LinearClient(settings.linear_api_key)
+os.environ.pop("LINEAR_API_KEY", None)
 
 # Pipeline state IDs — lazy-loaded
 _CRITIC_STATES: dict[str, str] | None = None

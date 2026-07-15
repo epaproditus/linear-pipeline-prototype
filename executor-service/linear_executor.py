@@ -46,6 +46,9 @@ from lib.backend import agent_chat
 app = FastAPI(title="executor-service")
 linear = LinearClient(settings.linear_api_key)
 
+# Unset the API key from environment so Hermes tools can't use it to update Linear directly
+os.environ.pop("LINEAR_API_KEY", None)
+
 # Pipeline state IDs — lazy-loaded
 _EXECUTOR_STATES: dict[str, str] | None = None
 
