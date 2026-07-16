@@ -1,0 +1,68 @@
+# Pipeline stage: Critic (PR review)
+# Triggered by dispatcher-service via GitHub repository_dispatch
+# when a Linear issue enters the In Review state (pipeline-stage=review).
+name: Pipeline — Critic (Review)
+
+on:
+  repository_dispatch:
+    types: [linear-issue]
+
+jobs:
+  review:
+    # Only run for issues entering the In Review state (after executor completes)
+    if: github.event.client_payload.state == 'in-review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+      ISSUE_STATE: ${{ github.event.client_payload.state }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install critic skill
+        run: |
+          mkdir -p ~/.hermes/skills/critic
+          cp repo/.agents/skills/critic.md ~/.hermes/skills/critic/SKILL.md
+          hermes skills list 2>/dev/null | grep critic || echo "Skill installed (name: critic)"
+
+      - name: Run critic review
+        id: review
+        run: |
+          hermes -s critic chat \
+            -q "Review PR for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee review-output.txt
+
+      - name: Parse JSON output
+        id: parse
+        if: always()
+        run: |
+          echo "=== Critic output ==="
+          # Extract JSON from output (output contract)
+          OUTPUT=$(cat review-output.txt)
+          echo "$OUTPUT"
+          echo "=== Done ==="
+
+      - name: Upload review artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: critic-output
+          path: |
+            review-output.txt
+            repo/
+          retention-days: 7
