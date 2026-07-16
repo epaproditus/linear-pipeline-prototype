@@ -161,12 +161,14 @@ class TestOldStageUrlsRemoved:
     """AC #6: Old stage URLs must be removed — no forwarding to internal services."""
 
     def test_no_stage_url_fields_in_settings(self):
-        """Settings should not contain stage URL fields."""
+        """Settings should not contain stage URL declared fields."""
         from app import settings  # noqa: F402
-        assert not hasattr(settings, "router_url"), "router_url should be removed"
-        assert not hasattr(settings, "planner_url"), "planner_url should be removed"
-        assert not hasattr(settings, "executor_url"), "executor_url should be removed"
-        assert not hasattr(settings, "critic_url"), "critic_url should be removed"
+        # Check declared model fields (not dynamic extra fields from .env)
+        model_fields = type(settings).model_fields
+        assert "router_url" not in model_fields, "router_url should not be a declared field"
+        assert "planner_url" not in model_fields, "planner_url should not be a declared field"
+        assert "executor_url" not in model_fields, "executor_url should not be a declared field"
+        assert "critic_url" not in model_fields, "critic_url should not be a declared field"
 
     def test_no_state_routes_dict(self):
         """STATE_ROUTES should not exist anywhere in the module."""

@@ -36,7 +36,7 @@ DISPATCH_STATES = frozenset({
 
 
 class DispatcherSettings(BaseSettings):
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "allow"}
     allowed_team_ids: str = ""
     linear_api_key: str = ""
     webhook_secret: str = ""
