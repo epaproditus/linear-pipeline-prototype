@@ -8,6 +8,7 @@ Services
 - planner:8663 — ready → planned + plan comment
 - executor:8664 — planned → in-review + PR
 - critic:8665 — in-review → approve/request changes
+- deploy:8666 — release notes, version tag, regression alerts, incident triage
 
 Usage
 - Copy service `.env.example` to `.env` per service.
