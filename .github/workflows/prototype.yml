@@ -1,0 +1,119 @@
+# Pipeline stage: PROTOTYPE — Sandbox Flows, Seed Data Agent
+# Triggered by dispatcher-service via GitHub repository_dispatch
+# when a Linear issue enters the PROTOTYPE state (pipeline-stage=prototype).
+# Runs two parallel substeps: sandbox exploration and data seeding.
+name: Pipeline — PROTOTYPE Stage (Sandbox + Seed Data)
+
+on:
+  repository_dispatch:
+    types: [linear-issue]
+
+jobs:
+  sandbox-agent:
+    # Run for issues entering the PROTOTYPE state
+    if: github.event.client_payload.state == 'prototype'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+      ISSUE_STATE: ${{ github.event.client_payload.state }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install sandbox-agent skill
+        run: |
+          mkdir -p ~/.hermes/skills/sandbox-agent
+          cp repo/.agents/skills/prototype/sandbox-agent.md ~/.hermes/skills/sandbox-agent/SKILL.md
+          hermes skills list 2>/dev/null | grep sandbox-agent || echo "Skill installed (name: sandbox-agent)"
+
+      - name: Run sandbox-agent
+        id: sandbox
+        run: |
+          hermes -s sandbox-agent chat \
+            -q "Run sandbox prototyping for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee sandbox-output.txt
+
+      - name: Capture sandbox-agent result
+        if: always()
+        run: |
+          echo "=== Sandbox Agent output ==="
+          cat sandbox-output.txt
+          echo "=== Done ==="
+
+      - name: Upload sandbox artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prototype-sandbox
+          path: |
+            sandbox-output.txt
+            repo/sandbox/
+          retention-days: 7
+
+  seed-data:
+    needs: sandbox-agent
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install seed-data skill
+        run: |
+          mkdir -p ~/.hermes/skills/seed-data
+          cp repo/.agents/skills/prototype/seed-data.md ~/.hermes/skills/seed-data/SKILL.md
+          hermes skills list 2>/dev/null | grep seed-data || echo "Skill installed (name: seed-data)"
+
+      - name: Run seed-data
+        id: seed
+        run: |
+          hermes -s seed-data chat \
+            -q "Generate seed data for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee seed-output.txt
+
+      - name: Capture seed-data result
+        if: always()
+        run: |
+          echo "=== Seed Data output ==="
+          cat seed-output.txt
+          echo "=== Done ==="
+
+      - name: Upload seed-data artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prototype-seed-data
+          path: |
+            seed-output.txt
+            repo/seed/
+          retention-days: 7
