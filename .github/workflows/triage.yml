@@ -1,0 +1,53 @@
+# Pipeline stage: Router (triage)
+# Triggered by dispatcher-service via GitHub repository_dispatch
+# when a Linear issue enters the needs-triage state.
+name: Pipeline — Router (Triage)
+
+on:
+  repository_dispatch:
+    types: [linear-issue]
+
+jobs:
+  triage:
+    # Only run for issues entering needs-triage state
+    if: github.event.client_payload.state == 'needs-triage'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+      ISSUE_STATE: ${{ github.event.client_payload.state }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install router skill
+        run: |
+          mkdir -p ~/.hermes/skills/router
+          cp repo/.agents/skills/router.md ~/.hermes/skills/router/SKILL.md
+          hermes skills list 2>/dev/null | grep router || echo "Skill installed (name: router)"
+
+      - name: Run router triage
+        id: triage
+        run: |
+          hermes -s router chat \
+            -q "Triage issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee triage-output.txt
+
+      - name: Capture triage result
+        if: always()
+        run: |
+          echo "=== Router output ==="
+          cat triage-output.txt
+          echo "=== Done ==="
