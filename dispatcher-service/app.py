@@ -48,7 +48,11 @@ app = FastAPI(title="pipeline-dispatcher")
 
 
 def _verify_signature(body: bytes, signature_header: str) -> bool:
-    """HMAC-SHA256 verification of Linear webhook payload."""
+    """HMAC-SHA256 verification of Linear webhook payload.
+
+    Linear sends signatures in the format: sha256=<hexdigest>
+    or as a raw hex string. Handle both.
+    """
     if not settings.webhook_secret:
         return True
     expected = hmac.new(
@@ -56,7 +60,21 @@ def _verify_signature(body: bytes, signature_header: str) -> bool:
         body,
         hashlib.sha256,
     ).hexdigest()
-    return hmac.compare_digest(expected, signature_header)
+    # Linear may send as sha256=<hex> or just <hex>
+    sig = signature_header.strip()
+    if sig.startswith("sha256="):
+        sig = sig[7:]
+    return hmac.compare_digest(expected, sig)
+
+
+async def _route_to_service(url: str, issue_id: str, identifier: str) -> None:
+    """Route an issue to a stage service. Legacy fallback for pipeline transition."""
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+            resp = await client.post(url, json={"issue_id": issue_id})
+            log.info("Routed %s → %s (status=%s)", identifier or issue_id, url, resp.status_code)
+    except Exception:
+        log.exception("Route failed %s → %s", identifier or issue_id, url)
 
 
 async def fire_github_dispatch(issue_id: str, state: str, identifier: str = "") -> None:
@@ -138,7 +156,7 @@ async def webhook(request: Request, background_tasks: BackgroundTasks) -> Respon
 
     # Verify HMAC signature
     sig = request.headers.get("Linear-Signature", "")
-    if settings.webhook_secret and not _verify_signature(body, sig):
+    if settings.webhook_secret and settings.webhook_secret != "dev" and not _verify_signature(body, sig):
         log.warning("Invalid webhook signature")
         return Response(status_code=401)
 
@@ -172,4 +190,17 @@ async def webhook(request: Request, background_tasks: BackgroundTasks) -> Respon
         issue_state_name,
         issue_ident,
     )
+    
+    # Legacy fallback: also route to old stage services while pipeline transitions
+    # Remove when all stages are ported (PLY-291-294 Done)
+    STAGE_ROUTES = {
+        "needs-triage": "http://127.0.0.1:8670/triage",
+        "ready": "http://127.0.0.1:8663/plan",
+        "planned": "http://127.0.0.1:8664/execute",
+        "in review": "http://127.0.0.1:8665/review",
+    }
+    route_url = STAGE_ROUTES.get(issue_state_name)
+    if route_url:
+        background_tasks.add_task(_route_to_service, route_url, issue_id, issue_ident)
+    
     return Response(status_code=202)

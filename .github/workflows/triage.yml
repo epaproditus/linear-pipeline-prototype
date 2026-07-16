@@ -34,8 +34,8 @@ jobs:
 
       - name: Install router skill
         run: |
-          mkdir -p ~/.hermes/skills/_pipeline/router
-          cp repo/.agents/skills/router.md ~/.hermes/skills/_pipeline/router/SKILL.md
+          mkdir -p ~/.hermes/skills/router
+          cp repo/.agents/skills/router.md ~/.hermes/skills/router/SKILL.md
           hermes skills list 2>/dev/null | grep router || echo "Skill installed (name: router)"
 
       - name: Run router triage
@@ -43,7 +43,7 @@ jobs:
         run: |
           hermes -s router chat \
             -q "Triage issue ${{ env.ISSUE_ID }}" \
-            -Q --yolo 2>&1 | tee triage-output.txt
+            --yolo 2>&1 | tee triage-output.txt
 
       - name: Capture triage result
         if: always()
