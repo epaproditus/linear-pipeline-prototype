@@ -1,0 +1,68 @@
+# Pipeline stage: Executor (plan implementation)
+# Triggered by dispatcher-service via GitHub repository_dispatch
+# when a Linear issue enters the Planned state (pipeline-stage=implement).
+name: Pipeline — Executor (Implementation)
+
+on:
+  repository_dispatch:
+    types: [linear-issue]
+
+jobs:
+  implement:
+    # Only run for issues entering the Planned state (after planner completes)
+    if: github.event.client_payload.state == 'planned'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+      ISSUE_STATE: ${{ github.event.client_payload.state }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install executor skill
+        run: |
+          mkdir -p ~/.hermes/skills/executor
+          cp repo/.agents/skills/executor.md ~/.hermes/skills/executor/SKILL.md
+          hermes skills list 2>/dev/null | grep executor || echo "Skill installed (name: executor)"
+
+      - name: Run executor implementation
+        id: execute
+        run: |
+          hermes -s executor chat \
+            -q "Implement plan for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee execute-output.txt
+
+      - name: Parse JSON output
+        id: parse
+        if: always()
+        run: |
+          echo "=== Executor output ==="
+          # Extract JSON from last line (output contract)
+          OUTPUT=$(cat execute-output.txt)
+          echo "$OUTPUT"
+          echo "=== Done ==="
+
+      - name: Upload execution artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: executor-output
+          path: |
+            execute-output.txt
+            repo/
+          retention-days: 7
