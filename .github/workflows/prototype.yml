@@ -57,6 +57,8 @@ jobs:
           retention-days: 7
 
   seed-data:
+    # Only run for issues entering the PROTOTYPE state
+    if: github.event.client_payload.state == 'prototype'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
