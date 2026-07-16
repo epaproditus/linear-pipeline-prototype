@@ -2,8 +2,13 @@
 
 Goal
 ----
+<<<<<<< HEAD
+Build a 5-stage agent pipeline for Linear issues:
+  Router → Planner → Executor → Critic → Deploy+Monitor
+=======
 Build a multi-stage agent pipeline for Linear issues:
   Router → Planner → Prototype → Executor → Validate → Critic → Deploy
+>>>>>>> origin/main
 
 Each stage is either a standalone FastAPI service (legacy prototype) or a
 GitHub Actions workflow driven by Hermes skills. Stages communicate through
@@ -23,6 +28,7 @@ router           8661  Verifies repo/AC/scope, emits ready or blocked
 planner          8663  Breaks issue into steps, provisions infra, labels planned
 executor         8664  Implements plan, runs tests, opens PR, labels in-review
 critic           8665  Reviews diff, scans security/deps, enforces merge gate
+deploy           8666  Generates release notes, tags version, monitors for regressions and incidents
 
 GitHub Actions Stages (skills-based)
 -------------------------------------
@@ -41,6 +47,9 @@ State Contract
   ready        → dispatcher → router     (skip if already ready? no — verify every time)
   planned      → dispatcher → executor   (planner labels planned)
   in-review    → dispatcher → critic     (executor labels in-review)
+  deploy       → dispatcher → deploy     (critic labels deploy)
+  regression   → dispatcher → deploy     (regression-alert skill)
+  incident     → dispatcher → deploy     (incident-triage skill)
   done         → no dispatch
 
 Each stage:
@@ -65,6 +74,10 @@ Router prompt: triage rules + output schema (ready | blocked + exactly one quest
 Planner prompt: decomposition rules + infra decision tree
 Executor prompt: implementation rules + sandbox execution rules
 Critic prompt: review rules + security/dep scan rules + gate conditions
+Deploy prompts:
+- release-notes prompt: git log parsing + changelog format + versioning rules
+- regression-alert prompt: reproduction steps extraction + duplicate detection + severity assessment
+- incident-triage prompt: severity/priority classification + escalation rules + workaround documentation
 
 Permissions
 -----------
@@ -75,6 +88,7 @@ router    read/write      contents:read   none
 planner   read/write      repo:write      none
 executor  read/write      repo:write      yes (sandboxed)
 critic    read            read + write PR review/review-comments  optional
+deploy    read/write      repo:write      yes (git tag + push)
 
 Infra
 -----
@@ -98,4 +112,5 @@ Deployment Order
 4. planner
 5. executor
 6. critic
-7. End-to-end smoke test on 5 issues
+7. DEPLOY+MONITOR stage: release-notes, regression-alert, incident-triage skills + deploy.yml workflow
+8. End-to-end smoke test on 5 issues

@@ -1,0 +1,174 @@
+# Pipeline stage: DEPLOY+MONITOR — Release Notes, Regression Alerts, Incident Triage
+# Triggered by dispatcher-service via GitHub repository_dispatch
+# when a Linear issue enters the DEPLOY, REGRESSION, or INCIDENT state.
+name: Pipeline — DEPLOY+MONITOR Stage
+
+on:
+  repository_dispatch:
+    types: [linear-issue]
+
+jobs:
+  release-notes:
+    # Run for issues entering the DEPLOY state (after critic approval)
+    if: github.event.client_payload.state == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+      ISSUE_STATE: ${{ github.event.client_payload.state }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install release-notes skill
+        run: |
+          mkdir -p ~/.hermes/skills/release-notes
+          cp repo/.agents/skills/deploy/release-notes.md ~/.hermes/skills/release-notes/SKILL.md
+          hermes skills list 2>/dev/null | grep release-notes || echo "Skill installed (name: release-notes)"
+
+      - name: Run release-notes
+        id: release
+        run: |
+          hermes -s release-notes chat \
+            -q "Generate release notes for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee release-output.txt
+
+      - name: Capture release-notes result
+        if: always()
+        run: |
+          echo "=== Release Notes output ==="
+          cat release-output.txt
+          echo "=== Done ==="
+
+      - name: Upload release-notes artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-release-notes
+          path: |
+            release-output.txt
+            repo/CHANGELOG.md
+          retention-days: 7
+
+  regression-alert:
+    # Run for issues entering the REGRESSION state
+    if: github.event.client_payload.state == 'regression'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+      ISSUE_STATE: ${{ github.event.client_payload.state }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install regression-alert skill
+        run: |
+          mkdir -p ~/.hermes/skills/regression-alert
+          cp repo/.agents/skills/deploy/regression-alert.md ~/.hermes/skills/regression-alert/SKILL.md
+          hermes skills list 2>/dev/null | grep regression-alert || echo "Skill installed (name: regression-alert)"
+
+      - name: Run regression-alert
+        id: regression
+        run: |
+          hermes -s regression-alert chat \
+            -q "Check and log regression for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee regression-output.txt
+
+      - name: Capture regression-alert result
+        if: always()
+        run: |
+          echo "=== Regression Alert output ==="
+          cat regression-output.txt
+          echo "=== Done ==="
+
+      - name: Upload regression-alert artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-regression-alert
+          path: regression-output.txt
+          retention-days: 7
+
+  incident-triage:
+    # Run for issues entering the INCIDENT state
+    if: github.event.client_payload.state == 'incident'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+      ISSUE_STATE: ${{ github.event.client_payload.state }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install incident-triage skill
+        run: |
+          mkdir -p ~/.hermes/skills/incident-triage
+          cp repo/.agents/skills/deploy/incident-triage.md ~/.hermes/skills/incident-triage/SKILL.md
+          hermes skills list 2>/dev/null | grep incident-triage || echo "Skill installed (name: incident-triage)"
+
+      - name: Run incident-triage
+        id: triage
+        run: |
+          hermes -s incident-triage chat \
+            -q "Triage incident for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee incident-output.txt
+
+      - name: Capture incident-triage result
+        if: always()
+        run: |
+          echo "=== Incident Triage output ==="
+          cat incident-output.txt
+          echo "=== Done ==="
+
+      - name: Upload incident-triage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-incident-triage
+          path: incident-output.txt
+          retention-days: 7
