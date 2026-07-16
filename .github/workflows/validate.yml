@@ -13,7 +13,6 @@ env:
 
 jobs:
   test-gen:
-    # Only run for issues entering the In Review state (after executor completes)
     if: github.event.client_payload.state == 'in-review'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -67,7 +66,6 @@ jobs:
           retention-days: 7
 
   ui-verify:
-    # Only run for issues entering the In Review state
     if: github.event.client_payload.state == 'in-review'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -120,7 +118,6 @@ jobs:
           retention-days: 7
 
   bug-repro:
-    # Only run for issues entering the In Review state
     if: github.event.client_payload.state == 'in-review'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -173,7 +170,6 @@ jobs:
           retention-days: 7
 
   aggregate:
-    # Aggregate validation results and transition Linear state
     if: github.event.client_payload.state == 'in-review'
     runs-on: ubuntu-latest
     needs: [test-gen, ui-verify, bug-repro]
@@ -182,6 +178,10 @@ jobs:
     env:
       ISSUE_ID: ${{ github.event.client_payload.issue_id }}
       PLANNED_STATE_ID: b4269e4b-e6da-4ab0-8f27-4f55ec36cbcb
+      # pipeline-stage label IDs (from PLY-303 setup-custom-fields.py)
+      PIPELINE_STAGE_IMPLEMENT: bd32d1ee-8ef1-4ad0-a29e-e395a874f1ba
+      PIPELINE_STAGE_REVIEW: be163186-d7c9-4620-854e-222174157c6f
+      PIPELINE_STAGE_VERIFY: a4358247-d921-406e-82df-c17e20710048
 
     steps:
       - name: Checkout repo
@@ -209,14 +209,14 @@ jobs:
             echo "test-gen status: $TESTGEN_STATUS"
             if [ "$TESTGEN_STATUS" != "passed" ]; then
               ALL_PASSED=false
-              REPORT_LINES="$REPORT_LINES- ❌ **test-gen** failed (status: $TESTGEN_STATUS)\n"
+              REPORT_LINES="$REPORT_LINES- ❌ **test-gen** failed (status: $TESTGEN_STATUS)\\n"
             else
-              REPORT_LINES="$REPORT_LINES- ✅ **test-gen** passed\n"
+              REPORT_LINES="$REPORT_LINES- ✅ **test-gen** passed\\n"
             fi
           else
             echo "test-gen output not found"
             ALL_PASSED=false
-            REPORT_LINES="$REPORT_LINES- ⚠️ **test-gen** no output found\n"
+            REPORT_LINES="$REPORT_LINES- ⚠️ **test-gen** no output found\\n"
           fi
 
           # Check ui-verify output
@@ -226,14 +226,14 @@ jobs:
             echo "ui-verify status: $UIVERIFY_STATUS"
             if [ "$UIVERIFY_STATUS" != "passed" ]; then
               ALL_PASSED=false
-              REPORT_LINES="$REPORT_LINES- ❌ **ui-verify** failed (status: $UIVERIFY_STATUS)\n"
+              REPORT_LINES="$REPORT_LINES- ❌ **ui-verify** failed (status: $UIVERIFY_STATUS)\\n"
             else
-              REPORT_LINES="$REPORT_LINES- ✅ **ui-verify** passed\n"
+              REPORT_LINES="$REPORT_LINES- ✅ **ui-verify** passed\\n"
             fi
           else
             echo "ui-verify output not found"
             ALL_PASSED=false
-            REPORT_LINES="$REPORT_LINES- ⚠️ **ui-verify** no output found\n"
+            REPORT_LINES="$REPORT_LINES- ⚠️ **ui-verify** no output found\\n"
           fi
 
           # Check bug-repro output
@@ -242,18 +242,18 @@ jobs:
             BUGREPRO_STATUS=$(grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' "$BUGREPRO_FILE" | head -1 | cut -d'"' -f4)
             echo "bug-repro status: $BUGREPRO_STATUS"
             if [ "$BUGREPRO_STATUS" = "fixed" ]; then
-              REPORT_LINES="$REPORT_LINES- ✅ **bug-repro** confirmed fixed\n"
+              REPORT_LINES="$REPORT_LINES- ✅ **bug-repro** confirmed fixed\\n"
             elif [ "$BUGREPRO_STATUS" = "unresolved" ]; then
-              # Bug repro unresolved is not necessarily a failure (non-bug issues)
               echo "bug-repro unresolved (may be non-bug issue)"
-              REPORT_LINES="$REPORT_LINES- ⏭️ **bug-repro** skipped (not a bug issue)\n"
+              REPORT_LINES="$REPORT_LINES- ⏭️ **bug-repro** skipped (not a bug issue)\\n"
             else
               ALL_PASSED=false
-              REPORT_LINES="$REPORT_LINES- ❌ **bug-repro** failed (status: $BUGREPRO_STATUS)\n"
+              REPORT_LINES="$REPORT_LINES- ❌ **bug-repro** failed (status: $BUGREPRO_STATUS)\\n"
             fi
           else
             echo "bug-repro output not found"
-            REPORT_LINES="$REPORT_LINES- ⚠️ **bug-repro** no output found\n"
+            ALL_PASSED=false
+            REPORT_LINES="$REPORT_LINES- ⚠️ **bug-repro** no output found\\n"
           fi
 
           echo "ALL_PASSED=$ALL_PASSED" >> $GITHUB_ENV
@@ -261,35 +261,44 @@ jobs:
           echo -e "$REPORT_LINES" >> $GITHUB_ENV
           echo "EOF_REPORT" >> $GITHUB_ENV
 
-      - name: Post validation summary comment
-        run: |
           if [ "$ALL_PASSED" = "true" ]; then
-            BODY="## ✅ Validation Passed\n\nAll VALIDATE stage checks passed:\n\n${{ env.REPORT_LINES }}\n\nIssue transitioned to next stage for review."
-            TARGET_STAGE="verify"
+            echo "TARGET_STAGE=verify" >> $GITHUB_ENV
+            echo "TARGET_LABEL_ID=$PIPELINE_STAGE_VERIFY" >> $GITHUB_ENV
           else
-            BODY="## ❌ Validation Failed\n\nSome VALIDATE stage checks did not pass:\n\n${{ env.REPORT_LINES }}\n\nIssue returned to Planned state for fixes."
-            TARGET_STAGE="implement"
+            echo "TARGET_STAGE=implement" >> $GITHUB_ENV
+            echo "TARGET_LABEL_ID=$PIPELINE_STAGE_IMPLEMENT" >> $GITHUB_ENV
           fi
 
-          # Post comment to Linear
-          COMMENT_QUERY="mutation{commentCreate(input:{issueId:\\\"${{ env.ISSUE_ID }}\\\",body:\\\"$BODY\\\"}){success comment{id}}}"
-          COMMENT_RESP=$(curl -s -H "Authorization: ${{ env.LINEAR_API_KEY }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\":\"$COMMENT_QUERY\"}" \
-            https://api.linear.app/graphql)
-          echo "Comment posted: $COMMENT_RESP"
-
-      - name: Transition issue on failure
-        if: env.ALL_PASSED == 'false'
+      - name: Post results and transition
         run: |
-          # Transition workflow state back to Planned
-          STATE_QUERY="mutation{issueUpdate(id:\\\"${{ env.ISSUE_ID }}\\\",input:{stateId:\\\"${{ env.PLANNED_STATE_ID }}\\\"}){success}}"
-          STATE_RESP=$(curl -s -H "Authorization: ${{ env.LINEAR_API_KEY }}" \
+          if [ "$ALL_PASSED" = "true" ]; then
+            BODY="## ✅ Validation Passed\n\nAll VALIDATE stage checks passed:\n\n${{ env.REPORT_LINES }}\n\nIssue advanced to next stage."
+          else
+            BODY="## ❌ Validation Failed\n\nSome VALIDATE stage checks did not pass:\n\n${{ env.REPORT_LINES }}\n\nIssue returned to Planned state for fixes."
+          fi
+
+          # 1) Post comment to Linear
+          curl -s -H "Authorization: ${{ env.LINEAR_API_KEY }}" \
             -H "Content-Type: application/json" \
-            -d "{\"query\":\"$STATE_QUERY\"}" \
-            https://api.linear.app/graphql)
-          echo "State transition response: $STATE_RESP"
-          echo "Issue returned to Planned state for fixes."
+            -d "{\"query\":\"mutation{commentCreate(input:{issueId:\\\"${{ env.ISSUE_ID }}\\\",body:\\\"$BODY\\\"}){success comment{id}}}\"}" \
+            https://api.linear.app/graphql
+          echo "Comment posted."
+
+          # 2) Swap pipeline-stage label: remove review label, add target
+          python3 repo/.github/scripts/swap-pipeline-stage.py \
+            "${{ env.ISSUE_ID }}" \
+            "${{ env.PIPELINE_STAGE_REVIEW }}" \
+            "${{ env.TARGET_LABEL_ID }}"
+          echo "pipeline-stage label updated."
+
+          # 3) On failure: transition state back to Planned
+          if [ "$ALL_PASSED" != "true" ]; then
+            curl -s -H "Authorization: ${{ env.LINEAR_API_KEY }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\":\"mutation{issueUpdate(id:\\\"${{ env.ISSUE_ID }}\\\",input:{stateId:\\\"${{ env.PLANNED_STATE_ID }}\\\"}){success}}\"}" \
+              https://api.linear.app/graphql
+            echo "Issue returned to Planned state for fixes."
+          fi
 
       - name: Upload aggregate artifact
         if: always()
