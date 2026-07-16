@@ -31,7 +31,7 @@ Replace `ISSUE_ID` with the ID from your query:
 ```bash
 curl -s -H "Authorization: $LINEAR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"query":"{issue(id:\"ISSUE_ID\"){id identifier title description state{id name} team{id key name} project{id name description} labels{nodes{id name parent{id name}}} comments{nodes{id body createdAt user{id name}}}}}\"}' \
+  -d '{"query":"{issue(id:\"ISSUE_ID\"){id identifier title description state{id name} team{id key name} project{id name description} labels{nodes{id name parent{id name}}} comments{nodes{id body createdAt user{id name}}}}}"}' \
   https://api.linear.app/graphql
 ```
 
