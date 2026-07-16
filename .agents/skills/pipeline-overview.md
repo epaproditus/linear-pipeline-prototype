@@ -80,15 +80,16 @@ Implement the plan: write production code, add tests, and open a pull request.
 
 ### VALIDATE
 
-Automated quality gates: security scan, dependency audit, linter, test results, and structural review before human eyes touch the PR.
+Automated pre-review gates: test generation from ACs, computer-use UI verification, and bug reproduction against the PR changes.
 
 | Field | Value |
 |---|---|
 | **Trigger** | `pipeline-stage: review` (or Linear state `in-review`) |
-| **Actions** | 1. Fetch PR diff. 2. Run security scan (imports, secrets, injection). 3. Check dependency freshness. 4. Validate test coverage. 5. Check architecture compliance. 6. Post review summary as PR review comment. 7. Set `pipeline-stage: verify`. |
-| **Inputs** | GitHub PR diff, repo structure, security rules |
-| **Outputs** | PR review comment (approve / request changes), `pipeline-stage` updated to `verify` |
-| **Service** | `critic-service` (port 8665) |
+| **Actions** | 1. **Test Generation** — analyze PR diff and ACs, generate unit/integration/edge-case tests, run them, commit. 2. **UI Verification** — use browser automation to verify UI-level ACs, capture screenshots, check console errors. 3. **Bug Reproduction** — for bug issues, reproduce the reported defect, verify the fix resolves it, capture evidence. 4. Aggregate results. 5. Post verification summary in Linear. 6. If all pass, set `pipeline-stage: verify`. If any fail, transition state back to `Planned` with failure details. |
+| **Inputs** | GitHub PR diff, issue ACs, bug reproduction steps, running application (staging/local) |
+| **Outputs** | Linear comment with validation report, `pipeline-stage` updated to `verify` (pass) or `implement` (fail), generated test files, screenshot evidence |
+| **Workflow** | `.github/workflows/validate.yml` — runs `test-gen` + `ui-verify` + `bug-repro` in parallel, then `aggregate` |
+| **Skills** | `.agents/skills/validate/test-gen.md`, `.agents/skills/validate/ui-verify.md`, `.agents/skills/validate/bug-repro.md` |
 
 ### REVIEW + MERGE
 
@@ -199,17 +200,18 @@ Issue Created
 
 ## Current Prototype vs. Full Factory
 
-The current `linear-pipeline-prototype` implements stages **PLAN → BUILD → VALIDATE** (via Router→Planner→Executor→Critic). Stages **PROTOTYPE**, **REVIEW+MERGE** (fully automated), and **DEPLOY+MONITOR** are planned additions.
+The current `linear-pipeline-prototype` implements stages **PLAN → PROTOTYPE → BUILD → VALIDATE → REVIEW** (via GitHub Actions workflows + Hermes skills). Stages **REVIEW+MERGE** (fully automated) and **DEPLOY+MONITOR** are planned additions.
 
 What exists now:
 - Dispatcher routes by Linear workflow state
 - Router verifies issue readiness
-- Planner writes implementation plans
-- Executor implements code and opens PRs
-- Critic reviews diffs and runs quality gates
+- PLAN: ticket-triage, feedback-digest, prd-outline skills + workflow
+- PROTOTYPE: sandbox-agent, seed-data skills + workflow
+- BUILD: Executor implements code and opens PRs
+- **VALIDATE**: test-gen, ui-verify, bug-repro skills + workflow (PLY-303)
+- REVIEW: Critic reviews diffs and runs quality gates
 
 What comes next:
-- **PROTOTYPE**: Spike agent for validating risky unknowns
 - **REVIEW+MERGE**: Autonomous merge gate with CI integration
 - **DEPLOY+MONITOR**: Deploy workflow + regression monitoring
 

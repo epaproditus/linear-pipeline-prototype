@@ -1,21 +1,26 @@
-# Linear-Hermes Agent Pipeline — Prototype Architecture
+# Linear-Hermes Agent Pipeline — Architecture
 
 Goal
 ----
+<<<<<<< HEAD
 Build a 5-stage agent pipeline for Linear issues:
   Router → Planner → Executor → Critic → Deploy+Monitor
+=======
+Build a multi-stage agent pipeline for Linear issues:
+  Router → Planner → Prototype → Executor → Validate → Critic → Deploy
+>>>>>>> origin/main
 
-Each stage is a standalone FastAPI service with its own systemd unit, port,
-prompt, and scoped permissions. Stages communicate through Linear state
-changes, not direct RPC.
+Each stage is either a standalone FastAPI service (legacy prototype) or a
+GitHub Actions workflow driven by Hermes skills. Stages communicate through
+Linear state changes and pipeline-stage custom field transitions, not direct RPC.
 
 Current Services
 ----------------
 - `openhands-linear-agent` on 8662 — OpenHands backend, already stable, out of scope for v1 prototype
 - `linear-agent` on 8660 — Hermes full-session agent, currently healthy, will be replaced by dispatcher
 
-Prototype Services
-------------------
+Prototype Services (legacy FastAPI)
+-----------------------------------
 Service          Port  Role
 ---------------- -----  -----------------------------------------------
 dispatcher       8660  Receives Linear webhook, routes by state
@@ -24,6 +29,16 @@ planner          8663  Breaks issue into steps, provisions infra, labels planned
 executor         8664  Implements plan, runs tests, opens PR, labels in-review
 critic           8665  Reviews diff, scans security/deps, enforces merge gate
 deploy           8666  Generates release notes, tags version, monitors for regressions and incidents
+
+GitHub Actions Stages (skills-based)
+-------------------------------------
+Stage            Workflow                    Skills
+---------------- -------------------------- -----------------------------------------------
+PLAN             .github/workflows/plan.yml  ticket-triage → feedback-digest → prd-outline
+PROTOTYPE        .github/workflows/prototype.yml sandbox-agent, seed-data
+BUILD            .github/workflows/implement.yml (via executor skill)
+VALIDATE         .github/workflows/validate.yml  test-gen, ui-verify, bug-repro
+REVIEW           .github/workflows/review.yml critic skill
 
 State Contract
 --------------
