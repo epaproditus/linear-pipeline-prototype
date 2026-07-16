@@ -1,0 +1,300 @@
+# Pipeline stage: VALIDATE — Test Generation, UI Verification, Bug Reproduction
+# Triggered by dispatcher-service via GitHub repository_dispatch
+# when a Linear issue enters the In Review state (pipeline-stage=review).
+# Runs three parallel validation jobs and aggregates results.
+name: Pipeline — VALIDATE Stage (Test Gen + UI Verify + Bug Repro)
+
+on:
+  repository_dispatch:
+    types: [linear-issue]
+
+env:
+  LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+
+jobs:
+  test-gen:
+    # Only run for issues entering the In Review state (after executor completes)
+    if: github.event.client_payload.state == 'in-review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install test-gen skill
+        run: |
+          mkdir -p ~/.hermes/skills/test-gen
+          cp repo/.agents/skills/validate/test-gen.md ~/.hermes/skills/test-gen/SKILL.md
+          hermes skills list 2>/dev/null | grep test-gen || echo "Skill installed (name: test-gen)"
+
+      - name: Run test-gen
+        id: testgen
+        run: |
+          hermes -s test-gen chat \
+            -q "Generate tests for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee testgen-output.txt
+
+      - name: Parse test-gen result
+        id: parse-testgen
+        if: always()
+        run: |
+          echo "=== Test Generation output ==="
+          cat testgen-output.txt
+          echo "=== Done ==="
+
+      - name: Upload test-gen artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-test-gen
+          path: |
+            testgen-output.txt
+            repo/**/test_*.py
+          retention-days: 7
+
+  ui-verify:
+    # Only run for issues entering the In Review state
+    if: github.event.client_payload.state == 'in-review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install ui-verify skill
+        run: |
+          mkdir -p ~/.hermes/skills/ui-verify
+          cp repo/.agents/skills/validate/ui-verify.md ~/.hermes/skills/ui-verify/SKILL.md
+          hermes skills list 2>/dev/null | grep ui-verify || echo "Skill installed (name: ui-verify)"
+
+      - name: Run ui-verify
+        id: uiverify
+        run: |
+          hermes -s ui-verify chat \
+            -q "Verify UI for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee uiverify-output.txt
+
+      - name: Parse ui-verify result
+        if: always()
+        run: |
+          echo "=== UI Verification output ==="
+          cat uiverify-output.txt
+          echo "=== Done ==="
+
+      - name: Upload ui-verify artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-ui-verify
+          path: |
+            uiverify-output.txt
+            ui-verify/
+          retention-days: 7
+
+  bug-repro:
+    # Only run for issues entering the In Review state
+    if: github.event.client_payload.state == 'in-review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install bug-repro skill
+        run: |
+          mkdir -p ~/.hermes/skills/bug-repro
+          cp repo/.agents/skills/validate/bug-repro.md ~/.hermes/skills/bug-repro/SKILL.md
+          hermes skills list 2>/dev/null | grep bug-repro || echo "Skill installed (name: bug-repro)"
+
+      - name: Run bug-repro
+        id: bugrepro
+        run: |
+          hermes -s bug-repro chat \
+            -q "Reproduce bug for issue ${{ env.ISSUE_ID }}" \
+            --yolo 2>&1 | tee bugrepro-output.txt
+
+      - name: Parse bug-repro result
+        if: always()
+        run: |
+          echo "=== Bug Reproduction output ==="
+          cat bugrepro-output.txt
+          echo "=== Done ==="
+
+      - name: Upload bug-repro artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-bug-repro
+          path: |
+            bugrepro-output.txt
+            bug-repro/
+          retention-days: 7
+
+  aggregate:
+    # Aggregate validation results and transition Linear state
+    if: github.event.client_payload.state == 'in-review'
+    runs-on: ubuntu-latest
+    needs: [test-gen, ui-verify, bug-repro]
+    timeout-minutes: 10
+
+    env:
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+      PLANNED_STATE_ID: b4269e4b-e6da-4ab0-8f27-4f55ec36cbcb
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Download all validation artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: validation-results
+
+      - name: Aggregate validation results
+        id: aggregate
+        run: |
+          echo "=== Aggregating Validation Results ==="
+
+          ALL_PASSED=true
+          REPORT_LINES=""
+
+          # Check test-gen output
+          TESTGEN_FILE="validation-results/validate-test-gen/testgen-output.txt"
+          if [ -f "$TESTGEN_FILE" ]; then
+            TESTGEN_STATUS=$(grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' "$TESTGEN_FILE" | head -1 | cut -d'"' -f4)
+            echo "test-gen status: $TESTGEN_STATUS"
+            if [ "$TESTGEN_STATUS" != "passed" ]; then
+              ALL_PASSED=false
+              REPORT_LINES="$REPORT_LINES- ❌ **test-gen** failed (status: $TESTGEN_STATUS)\n"
+            else
+              REPORT_LINES="$REPORT_LINES- ✅ **test-gen** passed\n"
+            fi
+          else
+            echo "test-gen output not found"
+            ALL_PASSED=false
+            REPORT_LINES="$REPORT_LINES- ⚠️ **test-gen** no output found\n"
+          fi
+
+          # Check ui-verify output
+          UIVERIFY_FILE="validation-results/validate-ui-verify/uiverify-output.txt"
+          if [ -f "$UIVERIFY_FILE" ]; then
+            UIVERIFY_STATUS=$(grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' "$UIVERIFY_FILE" | head -1 | cut -d'"' -f4)
+            echo "ui-verify status: $UIVERIFY_STATUS"
+            if [ "$UIVERIFY_STATUS" != "passed" ]; then
+              ALL_PASSED=false
+              REPORT_LINES="$REPORT_LINES- ❌ **ui-verify** failed (status: $UIVERIFY_STATUS)\n"
+            else
+              REPORT_LINES="$REPORT_LINES- ✅ **ui-verify** passed\n"
+            fi
+          else
+            echo "ui-verify output not found"
+            ALL_PASSED=false
+            REPORT_LINES="$REPORT_LINES- ⚠️ **ui-verify** no output found\n"
+          fi
+
+          # Check bug-repro output
+          BUGREPRO_FILE="validation-results/validate-bug-repro/bugrepro-output.txt"
+          if [ -f "$BUGREPRO_FILE" ]; then
+            BUGREPRO_STATUS=$(grep -o '"status"[[:space:]]*:[[:space:]]*"[^"]*"' "$BUGREPRO_FILE" | head -1 | cut -d'"' -f4)
+            echo "bug-repro status: $BUGREPRO_STATUS"
+            if [ "$BUGREPRO_STATUS" = "fixed" ]; then
+              REPORT_LINES="$REPORT_LINES- ✅ **bug-repro** confirmed fixed\n"
+            elif [ "$BUGREPRO_STATUS" = "unresolved" ]; then
+              # Bug repro unresolved is not necessarily a failure (non-bug issues)
+              echo "bug-repro unresolved (may be non-bug issue)"
+              REPORT_LINES="$REPORT_LINES- ⏭️ **bug-repro** skipped (not a bug issue)\n"
+            else
+              ALL_PASSED=false
+              REPORT_LINES="$REPORT_LINES- ❌ **bug-repro** failed (status: $BUGREPRO_STATUS)\n"
+            fi
+          else
+            echo "bug-repro output not found"
+            REPORT_LINES="$REPORT_LINES- ⚠️ **bug-repro** no output found\n"
+          fi
+
+          echo "ALL_PASSED=$ALL_PASSED" >> $GITHUB_ENV
+          echo "REPORT_LINES<<EOF_REPORT" >> $GITHUB_ENV
+          echo -e "$REPORT_LINES" >> $GITHUB_ENV
+          echo "EOF_REPORT" >> $GITHUB_ENV
+
+      - name: Post validation summary comment
+        run: |
+          if [ "$ALL_PASSED" = "true" ]; then
+            BODY="## ✅ Validation Passed\n\nAll VALIDATE stage checks passed:\n\n${{ env.REPORT_LINES }}\n\nIssue transitioned to next stage for review."
+            TARGET_STAGE="verify"
+          else
+            BODY="## ❌ Validation Failed\n\nSome VALIDATE stage checks did not pass:\n\n${{ env.REPORT_LINES }}\n\nIssue returned to Planned state for fixes."
+            TARGET_STAGE="implement"
+          fi
+
+          # Post comment to Linear
+          COMMENT_QUERY="mutation{commentCreate(input:{issueId:\\\"${{ env.ISSUE_ID }}\\\",body:\\\"$BODY\\\"}){success comment{id}}}"
+          COMMENT_RESP=$(curl -s -H "Authorization: ${{ env.LINEAR_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"$COMMENT_QUERY\"}" \
+            https://api.linear.app/graphql)
+          echo "Comment posted: $COMMENT_RESP"
+
+      - name: Transition issue on failure
+        if: env.ALL_PASSED == 'false'
+        run: |
+          # Transition workflow state back to Planned
+          STATE_QUERY="mutation{issueUpdate(id:\\\"${{ env.ISSUE_ID }}\\\",input:{stateId:\\\"${{ env.PLANNED_STATE_ID }}\\\"}){success}}"
+          STATE_RESP=$(curl -s -H "Authorization: ${{ env.LINEAR_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"$STATE_QUERY\"}" \
+            https://api.linear.app/graphql)
+          echo "State transition response: $STATE_RESP"
+          echo "Issue returned to Planned state for fixes."
+
+      - name: Upload aggregate artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-aggregate
+          path: validation-results/
+          retention-days: 7
