@@ -42,15 +42,17 @@ flowchart LR
 
 ### PLAN
 
-Decompose an issue into actionable steps, assess infrastructure needs, and produce a verified plan before any code is written.
+Three-phase upfront analysis before any code is written. Runs as a GitHub Actions workflow
+with three sequential jobs, each posting a Linear comment.
 
 | Field | Value |
 |---|---|
-| **Trigger** | Issue transitions to `pipeline-stage: triage` (or Linear state `ready`) |
-| **Actions** | 1. Fetch issue + comments + repo context. 2. Call LLM with planner prompt. 3. Break into numbered steps with infra notes. 4. Post plan as Linear comment. 5. Set `pipeline-stage: spec`. |
-| **Inputs** | Linear issue (description, comments, attachments), repo README/ARCHITECTURE if available |
-| **Outputs** | Linear comment with staged plan, `pipeline-stage` custom field updated to `spec` |
-| **Service** | `planner-service` (port 8663) |
+| **Trigger** | Linear state transitions to `Ready` (after Router triage passes) |
+| **Actions** | 1. **Ticket Triage** — deep AC quality, scope, dependency, and repo-context assessment. 2. **Feedback Digest** — consolidate comments/discussion into structured requirements. 3. **PRD Outline** — synthesize into a Product Requirements Document with success criteria, approach, and risks. |
+| **Inputs** | Linear issue (description, comments, attachments), repo ARCHITECTURE.md |
+| **Outputs** | Three Linear comments (triage assessment, feedback digest, PRD outline), `pipeline-stage` set to `spec`, workflow state transitioned to `Planned` |
+| **Workflow** | `.github/workflows/plan.yml` — runs `ticket-triage` → `feedback-digest` → `prd-outline` skills |
+| **Skills** | `.agents/skills/plan/ticket-triage.md`, `.agents/skills/plan/feedback-digest.md`, `.agents/skills/plan/prd-outline.md` |
 
 ### PROTOTYPE
 
