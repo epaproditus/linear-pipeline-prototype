@@ -1,0 +1,53 @@
+# Pipeline stage: Planner (plan decomposition)
+# Triggered by dispatcher-service via GitHub repository_dispatch
+# when a Linear issue enters the ready-to-implement state (after router triage).
+name: Pipeline — Planner (Decomposition)
+
+on:
+  repository_dispatch:
+    types: [linear-issue]
+
+jobs:
+  plan:
+    # Only run for issues entering ready-to-implement state (post-triage)
+    if: github.event.client_payload.state == 'ready-to-implement'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+      ISSUE_ID: ${{ github.event.client_payload.issue_id }}
+      ISSUE_STATE: ${{ github.event.client_payload.state }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Install Hermes
+        run: |
+          if ! command -v hermes &>/dev/null; then
+            curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+          fi
+          hermes --version
+
+      - name: Install planner skill
+        run: |
+          mkdir -p ~/.hermes/skills/planner
+          cp repo/.agents/skills/planner.md ~/.hermes/skills/planner/SKILL.md
+          hermes skills list 2>/dev/null | grep planner || echo "Skill installed (name: planner)"
+
+      - name: Run planner decomposition
+        id: plan
+        run: |
+          hermes -s planner chat \
+            -q "Decompose issue ${{ env.ISSUE_ID }} into an implementation plan" \
+            --yolo 2>&1 | tee plan-output.txt
+
+      - name: Capture plan result
+        if: always()
+        run: |
+          echo "=== Planner output ==="
+          cat plan-output.txt
+          echo "=== Done ==="
