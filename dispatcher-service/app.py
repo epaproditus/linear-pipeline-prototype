@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import time
 import logging
 import sys
 from typing import Any
@@ -31,7 +32,9 @@ DISPATCH_STATES = frozenset({
     "needs-triage",
     "ready",
     "planned",
-    "in-review",
+    "in review",
+    "needs-scope",
+    "blocked",
 })
 
 
@@ -44,6 +47,26 @@ class DispatcherSettings(BaseSettings):
 
 
 settings = DispatcherSettings()
+
+# Loop prevention: track recently dispatched issue_id+state pairs
+# to avoid re-triggering on webhooks caused by the same dispatch
+_RECENT_DISPATCHES: dict[str, float] = {}
+_DEDUP_WINDOW = 30.0  # seconds
+
+def _is_duplicate(issue_id: str, state: str) -> bool:
+    key = f"{issue_id}:{state}"
+    now = time.monotonic()
+    if key in _RECENT_DISPATCHES:
+        elapsed = now - _RECENT_DISPATCHES[key]
+        if elapsed < _DEDUP_WINDOW:
+            return True
+    _RECENT_DISPATCHES[key] = now
+    # Prune old entries
+    for k in list(_RECENT_DISPATCHES.keys()):
+        if now - _RECENT_DISPATCHES[k] > _DEDUP_WINDOW * 2:
+            del _RECENT_DISPATCHES[k]
+    return False
+
 app = FastAPI(title="pipeline-dispatcher")
 
 
@@ -68,7 +91,7 @@ def _verify_signature(body: bytes, signature_header: str) -> bool:
 
 
 async def _route_to_service(url: str, issue_id: str, identifier: str) -> None:
-    """Route an issue to a stage service. Legacy fallback for pipeline transition."""
+    """Route an issue to a stage service. Routes issue to the appropriate stage service."""
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
             resp = await client.post(url, json={"issue_id": issue_id})
@@ -179,8 +202,27 @@ async def webhook(request: Request, background_tasks: BackgroundTasks) -> Respon
         log.info("Skipped: team %s not in allowed set", team_id[:8])
         return Response(status_code=202)
 
+    # Autopilot gate — only route issues with the autopilot label
+    # This prevents random state changes from kicking off the pipeline
+    labels_raw = data.get("labels", [])
+    if isinstance(labels_raw, dict):
+        issue_labels = labels_raw.get("nodes", [])
+    elif isinstance(labels_raw, list):
+        issue_labels = labels_raw
+    else:
+        issue_labels = []
+    has_autopilot = any(l.get("name", "").lower() == "autopilot" for l in issue_labels)
+    if not has_autopilot:
+        log.info("Skipped: issue %s lacks 'autopilot' label", issue_ident)
+        return Response(status_code=202)
+
     if issue_state_name not in DISPATCH_STATES:
         log.info("Skipped: state '%s' not in dispatch set", issue_state_name)
+        return Response(status_code=202)
+
+    # Skip duplicate events (loop prevention)
+    if _is_duplicate(issue_id, issue_state_name):
+        log.info("Skipped duplicate: %s (state=%s)", issue_ident, issue_state_name)
         return Response(status_code=202)
 
     log.info("Firing GitHub dispatch for %s (state=%s)", issue_ident, issue_state_name)
@@ -191,10 +233,11 @@ async def webhook(request: Request, background_tasks: BackgroundTasks) -> Respon
         issue_ident,
     )
     
-    # Legacy fallback: also route to old stage services while pipeline transitions
-    # Remove when all stages are ported (PLY-291-294 Done)
+    # Route to stage services based on state
     STAGE_ROUTES = {
         "needs-triage": "http://127.0.0.1:8670/triage",
+        "needs-scope": "http://127.0.0.1:8667/scope",
+        "blocked": "http://127.0.0.1:8670/triage",
         "ready": "http://127.0.0.1:8663/plan",
         "planned": "http://127.0.0.1:8664/execute",
         "in review": "http://127.0.0.1:8665/review",
